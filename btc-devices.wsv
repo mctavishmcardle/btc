@@ -1,0 +1,11 @@
+# mapping between bluetooth device aliases and their mac addresses
+# ranked in order of preference for auto-connecting
+
+# lines beginning with `#` are ignored
+
+# any sgnificant whitespace should be sufficient to separate the first & second
+# columns, containing the alias & mac address, respectively
+# ('wsv' stands for "whitespace-separated values")
+
+# example line (commented out):
+#   ALIAS       MAC_ADDRESS

@@ -1,0 +1,179 @@
+#!/usr/bin/bash
+
+preferred_devices_file=$HOME/.config/btc-devices.wsv
+
+get_device_mac () (
+    # attempt to match an alias to a mac address
+    #
+    # expects as arguments:
+    #   1. the target device alias
+    #   2. an awk script that parses stdin and outputs two columns containing:
+    #       1. the device alias
+    #       2. the device mac address
+
+    # need to run the loop in the current shell to exit correctly
+    shopt -s lastpipe
+
+    awk "$2" | while read -r -a alias_and_mac;
+    do
+        if [ "$1" == "${alias_and_mac[0]}" ]; then
+            echo "${alias_and_mac[1]}"
+            return 0
+        fi
+    done
+
+    return 1
+)
+
+preferred_devices () {
+    # list preferred device aliases and mac addresses, in two columns
+
+    if [ -f $preferred_devices_file ]; then
+        cat $preferred_devices_file | grep -v -e '^$' -e '^#'
+    else
+        return 1
+    fi
+}
+
+connect_mac () {
+    # connect to a bluetooth device
+    #
+    # expects as arguments:
+    #   1. the mac address of the device
+
+    bluetoothctl connect $1
+}
+
+bluetooth_power_wrap () {
+    # starts the bluetooth device before running a command
+    # and turns it off if the command fails
+    #
+    # executes the entire argument string
+
+    # this will noop if the bluetooth device is already running
+    bluetoothctl power on
+
+    $*
+
+    # turn the bluetooth device off &
+    if [ $? -ne 0 ]; then
+        bluetoothctl power off
+        return 1
+    fi
+}
+
+connect () (
+    # attempt to connect to a device by alias
+    #
+    # expects as arguments:
+    #   1. the target device alias
+
+    device_alias=$1
+
+    if [ -z "$device_alias" ]; then
+        echo "A device alias to connect to must be provided"
+        return 1
+    fi
+
+    connect_device_alias () (
+        # attempt to connect to a device by alias
+        #
+        # expects as arguments:
+        #   1. the target device alias
+        #   2. an awk body that parses stdin into a variable named
+        #      `aliases_to_macs` that maps device alises to their mac addresses
+
+        possible_dev_mac=$(get_device_mac $1 "$2")
+
+        if [ $? -eq 0 ]; then
+            # try to connect if it found a match
+            echo "Found matching alias with mac address \`$possible_dev_mac\`"
+            connect_mac $possible_dev_mac
+            # ensure the connection exit status is properly propagated up
+            return $?
+        else
+            # fail if a matching mac cannot be found
+            return 1
+        fi
+    )
+
+
+    # first try the preferred devices; exit if successful
+    preferred_devices \
+        | connect_device_alias $device_alias '{ print $1, $2 }' && return 0
+
+    # then try the devices the bluetooth controller knows; exit if successful
+    bluetoothctl devices \
+        | connect_device_alias $device_alias '{print $3, $2}' && return 0
+
+    # failure message and fail exit, if no successful connection
+    # toggle the bluetooth device back off, for convenience
+    echo "Alias '$device_alias' cannot be connected to"
+    return 1
+)
+
+
+auto () (
+    # attempt to connect to preferred devices, in order of preference
+
+    # going to test for this value, so initialize it to falsy
+    last_successful=1
+
+    # extract only the mac addresses (the second column) from the device list;
+    # attempt to connect to each in order
+    preferred_devices | awk '{print $2}' | while read -r mac_address;
+    do
+        # attempt to connect to the device
+        connect_mac $mac_address
+        # store the success of that attempt for the next iteration, if any
+        last_successful=$?
+
+        # stop if the connection attempt worked
+        if [ $last_successful -eq 0 ]; then
+            break
+        fi
+    done
+
+    if [ $last_successful -ne 0 ]; then
+        # failure message and fail exit, if no successful connection
+        # toggle the bluetooth device back off, for convenience
+        echo "Unable to connect to any preferred devices"
+        return 1
+    fi
+)
+
+display_help () {
+    # prints the help info
+
+    echo 'Usage: btc [OPTIONS] [COMMAND [ARGUMENT...]]'
+    echo
+    echo 'Perform some simple interactions with the bluetooth controller'
+    echo
+    echo 'Relies on a list of preferred devices (and their mac addresses)'
+    echo "stored in \`$preferred_devices_file\`."
+    echo 'See the example file for more information on its required structure'
+    echo
+    echo 'Options:'
+    echo '    --h, --help       Show this message and exit.'
+    echo
+    echo 'Commands:'
+    echo '    auto              Connect to preferred devices in descending order'
+    echo '    connect ALIAS     Lookup device by alias and connect'
+    echo '    off               Turn the bluetooth controller off'
+
+}
+
+case $1 in
+    "auto")
+        bluetooth_power_wrap auto
+        ;;
+    "connect")
+        bluetooth_power_wrap connect $2
+        ;;
+    "off")
+        bluetoothctl power off
+        ;;
+    "-h" | "--help")
+        display_help
+        ;;
+esac
