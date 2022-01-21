@@ -116,8 +116,8 @@ connect () (
 auto () (
     # attempt to connect to preferred devices, in order of preference
 
-    # going to test for this value, so initialize it to falsy
-    last_successful=1
+    # need to run the loop in the current shell to exit correctly
+    shopt -s lastpipe
 
     # extract only the mac addresses (the second column) from the device list;
     # attempt to connect to each in order
@@ -125,21 +125,17 @@ auto () (
     do
         # attempt to connect to the device
         connect_mac $mac_address
-        # store the success of that attempt for the next iteration, if any
-        last_successful=$?
 
         # stop if the connection attempt worked
-        if [ $last_successful -eq 0 ]; then
-            break
+        if [ $? -eq 0 ]; then
+            return 0
         fi
     done
 
-    if [ $last_successful -ne 0 ]; then
-        # failure message and fail exit, if no successful connection
-        # toggle the bluetooth device back off, for convenience
-        echo "Unable to connect to any preferred devices"
-        return 1
-    fi
+    # failure message and fail exit, if no successful connection
+    # toggle the bluetooth device back off, for convenience
+    echo "Unable to connect to any preferred devices"
+    return 1
 )
 
 display_help () {
